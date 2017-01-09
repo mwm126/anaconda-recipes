@@ -1,0 +1,31 @@
+package:
+  name: bcrypt
+  version: 3.1.1
+
+source:
+  fn: bcrypt-3.1.1.tar.gz
+  url: https://pypi.python.org/packages/dd/4c/907ff93ba2df00bc1c4a4e2a5b2ee0fe4715f4dbcc0de891fadba75a4f34/bcrypt-3.1.1.tar.gz
+  md5: 7348b2c361e23cf205701bba7652d789
+
+requirements:
+  build:
+    - python
+    - setuptools
+    - cffi >=1.1
+    - six >=1.4.1
+  run:
+    - python
+    - cffi >=1.1
+    - six >=1.4.1
+
+test:
+  imports:
+    - bcrypt
+    - bcrypt._bcrypt
+
+about:
+  home: https://github.com/pyca/bcrypt/
+  license: Apache License, Version 2.0
+  license_family: Apache
+  license_file: LICENSE
+  summary: modern password hashing for your software and your servers
