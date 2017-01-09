@@ -1,0 +1,39 @@
+package:
+  name: pandas
+  version: 0.19.0
+
+source:
+  git_url: https://github.com/pydata/pandas.git
+  git_tag: v0.19.0
+
+requirements:
+  build:
+    - python
+    - setuptools
+    - numpy x.x
+    - cython
+    - python-dateutil
+    - pytz
+  run:
+    - python
+    - numpy x.x
+    - python-dateutil
+    - pytz
+
+test:
+  requires:
+    - nose >=1.0.0
+  imports:
+    - pandas
+
+about:
+  home: http://pandas.pydata.org/
+  license: BSD
+  license_file: LICENSE
+  summary: Powerful data structures and data analysis tools
+  description: |
+    pandas is an open source, BSD-licensed library providing high-performance,
+    easy-to-use data structures and data analysis tools for the Python
+    programming language.
+  doc_url: http://pandas.pydata.org/pandas-docs/stable/
+  dev_url: https://github.com/pydata/pandas
