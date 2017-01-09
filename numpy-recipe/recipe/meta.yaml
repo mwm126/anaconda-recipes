@@ -1,0 +1,47 @@
+package:
+  name: numpy
+  version: 1.11.2
+
+source:
+  fn: numpy-1.11.2.tar.gz
+  url: https://pypi.python.org/packages/16/f5/b432f028134dd30cfbf6f21b8264a9938e5e0f75204e72453af08d67eb0b/numpy-1.11.2.tar.gz
+  md5: 03bd7927c314c43780271bf1ab795ebc
+  patches:
+    - dlopenflags.patch         [unix and not nomkl]
+    - osx-dist.patch            [osx]
+    - win-setup.patch           [win]
+    - win-dist.patch            [win]
+    - mklfft.patch
+
+build:
+  features:
+    - nomkl                   [x86 and nomkl]
+
+requirements:
+  build:
+    - python
+    - setuptools
+    - mkl-devel 11.3.3        [not nomkl]
+    - openblas 0.2.14         [linux and nomkl and (not ppc64le)]
+    - cio-bt
+  run:
+    - python
+    - mkl 11.3.3              [not nomkl]
+    - openblas 0.2.14         [linux and nomkl and (not ppc64le)]
+    - libgfortran 3.0.0       [linux and nomkl and (not ppc64le)]
+
+test:
+  requires:
+    - nose
+    - cio-bt
+  commands:
+    - f2py -h                 [unix]
+  imports:
+    - numpy
+    - numpy.linalg.lapack_lite
+
+about:
+  home: http://numpy.scipy.org/
+  license: BSD
+  license_file: LICENSE.txt
+  summary: array processing for numbers, strings, records, and objects
