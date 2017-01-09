@@ -1,0 +1,30 @@
+package:
+  name: attrs
+  version: 15.2.0
+
+source:
+  fn: attrs-15.2.0.tar.gz
+  url: https://pypi.python.org/packages/source/a/attrs/attrs-15.2.0.tar.gz
+  md5: b3c460eb6482f6e557c0e4025475c007
+
+requirements:
+  build:
+    - python
+    - setuptools
+  run:
+    - python
+
+test:
+  imports:
+    - attr
+
+about:
+  home: https://attrs.readthedocs.org/
+  license: MIT
+  license_file: LICENSE
+  summary: Implement attribute-related object protocols without boilerplate
+  description: |
+    Attrs eases the chores of implementing the most common
+    attribute-related object protocols.
+  doc_url: https://attrs.readthedocs.org
+  dev_url: https://github.com/hynek/attrs
