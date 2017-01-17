@@ -54,8 +54,6 @@ import getpass
 import json
 import datetime
 import base64
-import uuid
-from collections import deque
 
 import git
 import requests
@@ -299,13 +297,13 @@ def complete_action(action, debug=False):
     if debug:
         logging.info('Debug mode enabled.')
 
+    set_gh_auth() # Fixes "API rate limit exceeded" issue
+
     diff_df = get_recipe_diff(debug=debug)
     logging.info('\n'+str(diff_df))
 
     if action == 'diff':
         return 0
-
-    set_gh_auth() # Fixes "API rate limit exceeded" issue
 
     if action == 'externalize':
         recipes_to_update = diff_df[~diff_df.fillna(True)['ContentsEqual']]
@@ -328,12 +326,13 @@ def complete_action(action, debug=False):
             external_repo.git.merge('master')
 
             logging.info('Opening PR for recipe "{}" with branch "{}"...'.format(recipe_name, branch_name))
-            external_repo.git.push('origin', branch_name)
-            GH_SESSION.post(GH_API_URL+'/repos/AnacondaRecipes/'+recipe_name+'-recipe/pulls',
-                            data=dict(title='Update with internal changes',
-                                      body='This is a test.',
-                                      head=branch_name,
-                                      base='master'))
+            if not debug:
+                external_repo.git.push('origin', branch_name)
+                GH_SESSION.post(GH_API_URL+'/repos/AnacondaRecipes/'+recipe_name+'-recipe/pulls',
+                                data=dict(title='Update with internal changes',
+                                          body='This is a test.',
+                                          head=branch_name,
+                                          base='master'))
     elif action == 'internalize':
         # TODO: Open a PR with a new branch name, representing all externally-altered recipes
         raise Exception('Not yet implemented.')
