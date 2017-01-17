@@ -342,7 +342,6 @@ def complete_action(action, debug=False):
 
         recipes_to_update = diff_df[~diff_df.fillna(True)['ContentsEqual']]
         for (recipe_name,) in recipes_to_update[['Recipe']].itertuples(index=False):
-            print(recipe_name)
             external_recipe_dpath = os.path.join(WORK_DIR, 'AnacondaRecipes', recipe_name+'-recipe', 'recipe')
             internal_recipe_dpath = os.path.join(WORK_DIR, 'anaconda', 'packages', recipe_name)
 
