@@ -149,6 +149,8 @@ def clone_repo(to_path, uri='ContinuumIO/anaconda'):
 
     if os.path.isdir(to_path):
         shutil.rmtree(to_path)
+    if not os.path.isdir(os.path.dirname(to_path)):
+        os.mkdir(os.path.dirname(to_path))
 
     class DisplayProgress(git.RemoteProgress):
         def update(self, op, cur_count, max_count=None, message=''):
@@ -157,11 +159,9 @@ def clone_repo(to_path, uri='ContinuumIO/anaconda'):
     # Clone the repo
     progressDisplay = DisplayProgress()
     logging.info('Cloning {}'.format(url))
-    repo = git.Repo.clone_from(url, to_path+'.tmp', progress=progressDisplay)
+    git.Repo.clone_from(url, to_path+'.tmp', progress=progressDisplay)
     shutil.move(to_path+'.tmp', to_path)
     print()
-
-    return repo
 
 def get_recipe_contents(repo_dir):
     contents_dict = {}
@@ -232,9 +232,8 @@ def get_anaconda_repo_contents(use_cache=False):
 
             repo_dir = os.path.join(WORK_DIR, 'AnacondaRecipes', repo_name)
             if not use_cache or not os.path.isdir(repo_dir):
-                repo = clone_repo(repo_dir, uri='AnacondaRecipes/'+repo_name)
-            else:
-                repo = git.Repo(repo_dir)
+                clone_repo(repo_dir, uri='AnacondaRecipes/'+repo_name)
+            repo = git.Repo(repo_dir)
             repo.git.checkout('master')
 
             recipe_dir = os.path.join(repo_dir, 'recipe')
@@ -275,9 +274,8 @@ def get_anaconda_recipe_contents(use_cache=False):
     logging.info('Fetching all Anaconda distribution recipes...')
     anaconda_repo_dir = os.path.join(WORK_DIR, 'anaconda')
     if not use_cache or not os.path.isdir(anaconda_repo_dir):
-        repo = clone_repo(anaconda_repo_dir, uri='ContinuumIO/anaconda')
-    else:
-        repo = git.Repo(anaconda_repo_dir)
+        clone_repo(anaconda_repo_dir, uri='ContinuumIO/anaconda')
+    repo = git.Repo(anaconda_repo_dir)
     repo.git.checkout('master')
     pkgs_dir = os.path.join(anaconda_repo_dir, 'packages')
     for recipe_dir in os.listdir(pkgs_dir):
@@ -289,8 +287,7 @@ def get_anaconda_recipe_contents(use_cache=False):
     anaconda_recipes_repo_dir = os.path.join(WORK_DIR, 'anaconda-recipes')
     if not use_cache or not os.path.isdir(anaconda_recipes_repo_dir):
         clone_repo(anaconda_recipes_repo_dir, uri='ContinuumIO/anaconda-recipes')
-    else:
-        repo = git.Repo(anaconda_recipes_repo_dir)
+    repo = git.Repo(anaconda_recipes_repo_dir)
     repo.git.checkout('master')
     for recipe_dir in os.listdir(anaconda_recipes_repo_dir):
         recipe_dpath = os.path.join(anaconda_recipes_repo_dir, recipe_dir)
@@ -348,13 +345,13 @@ def complete_action(action, debug=False):
     if debug:
         logging.info('Debug mode enabled.')
 
-    set_gh_auth() # Fixes "API rate limit exceeded" issue
-
     diff_df = get_recipe_diff(debug=debug)
     logging.info('\n'+str(diff_df))
 
     if action == 'diff':
         return 0
+
+    set_gh_auth() # Fixes "API rate limit exceeded" issue
 
     if action == 'externalize':
         recipes_to_update = diff_df[~diff_df.fillna(True)['ContentsEqual']]
