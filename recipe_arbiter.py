@@ -401,7 +401,7 @@ def main(argv):
     status code.
     """
     parser = argparse.ArgumentParser()
-    parser.add_argument('action', choices=('quick-diff', 'diff', 'externalize', 'internalize'), help='Action')
+    parser.add_argument('action', choices=('diff', 'externalize', 'internalize'), help='Action')
     parser.add_argument('-l', '--log-level', choices=['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'], default='INFO', help='Logging level')
     parser.add_argument('-d', '--debug', action='store_true', help='Speed up debugging by caching GitHub API responses on disk, and reading these responses on future runs in --debug mode. This also avoids user/pass prompt after cache is created.')
     args = parser.parse_args(argv[1:])
