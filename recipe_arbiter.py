@@ -331,7 +331,7 @@ def complete_action(action, debug=False):
                 external_repo.git.push('origin', branch_name)
                 GH_SESSION.post(GH_API_URL+'/repos/AnacondaRecipes/'+recipe_name+'-recipe/pulls',
                                 data=dict(title='Update with internal changes',
-                                          body='This is a test.',
+                                          body='',
                                           head=branch_name,
                                           base='master'))
     elif action == 'internalize':
@@ -365,7 +365,7 @@ def complete_action(action, debug=False):
             internal_repo.git.push('origin', branch_name)
             GH_SESSION.post(GH_API_URL+'/repos/ContinuumIO/anaconda/pulls',
                             data=dict(title='Update with AnacondaRecipes changes',
-                                      body='This is a test.',
+                                      body='',
                                       head=branch_name,
                                       base='master'))
     else:
