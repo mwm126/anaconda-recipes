@@ -325,8 +325,10 @@ def complete_action(action, debug=False):
             external_repo.git.commit('-a', '-m', 'Update with internal changes')
             external_repo.git.merge('master')
 
-            logging.info('Opening PR for recipe "{}" with branch "{}"...'.format(recipe_name, branch_name))
-            if not debug:
+            if debug:
+                logging.info('Debug mode: Not opening PR for recipe "{}" with branch "{}"...'.format(recipe_name, branch_name))
+            else:
+                logging.info('Opening PR for recipe "{}" with branch "{}"...'.format(recipe_name, branch_name))
                 external_repo.git.push('origin', branch_name)
                 GH_SESSION.post(GH_API_URL+'/repos/AnacondaRecipes/'+recipe_name+'-recipe/pulls',
                                 data=dict(title='Update with internal changes',
