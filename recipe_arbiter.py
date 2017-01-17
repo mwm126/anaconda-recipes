@@ -69,50 +69,9 @@ GH_API_URL = 'https://api.github.com'
 # Prepare a requests Session object for connection-pooling and Keep-Alive
 GH_SESSION = requests.Session()
 
-# Directory which stores the cached responses
-CACHE_DIR = '/tmp'
-
 # Directory where Git repo(s) are checked out
 WORK_DIR = '/tmp'
 
-
-def cache_is_ready(*resp_types):
-    """resp_types is a list of strings representing cache file basenames.
-    Return True if cache is ready to be read.
-    """
-    for resp_type in resp_types:
-        cache_fpath = os.path.join(CACHE_DIR, resp_type)+'.json'
-        if not os.path.isfile(cache_fpath):
-            return False
-    return True
-        
-
-def write_responses_cache(**responses):
-    """responses is a dict of string->dict, representing cache file basenames
-    mapped to JSON responses (to be cached).
-    """
-    for resp_type, resp_json in responses.items():
-        cache_fpath = os.path.join(CACHE_DIR, resp_type)+'.json'
-        with open(cache_fpath+'.tmp', 'w') as fp:
-            json.dump(resp_json, fp)
-        shutil.move(cache_fpath+'.tmp', cache_fpath)
-        logging.debug('Cached GitHub API response for "{}" as {}'.format(resp_type, cache_fpath))
-
-
-def read_cached_responses(*resp_types):
-    """resp_types is a list of strings representing cache file basenames.
-    Return a tuple corresponding to resp_types, which represents the cached JSON
-    responses.
-    """
-    cached_responses = []
-
-    for resp_type in resp_types:
-        cache_fpath = os.path.join(CACHE_DIR, resp_type)+'.json'
-        with open(cache_fpath, 'r') as fp:
-            cache_json = json.load(fp)
-        cached_responses.append(cache_json)
-
-    return tuple(cached_responses)
 
 
 def raise_on_err(resp):
@@ -130,15 +89,6 @@ def raise_on_err(resp):
         raise Exception('GitHub API returned the following error message: "{}"'.format(resp['message']))
 
 
-def should_exclude_name(file_name):
-    """Return True if file_name doesn't match a valid conda recipe name, and
-    therefore should be excluded.
-    """
-    return (file_name.endswith('BUILD') or
-            file_name.endswith('.md') or
-            file_name.endswith('.txt'))
-
-
 def clone_repo(to_path, uri='ContinuumIO/anaconda'):
     """Clone repo into a fresh directory.
     Do it in such a way that the operation is "atomic", so that checking
@@ -151,6 +101,8 @@ def clone_repo(to_path, uri='ContinuumIO/anaconda'):
         shutil.rmtree(to_path)
     if not os.path.isdir(os.path.dirname(to_path)):
         os.mkdir(os.path.dirname(to_path))
+    if os.path.exists(to_path+'.tmp'):
+        shutil.rmtree(to_path+'.tmp')
 
     class DisplayProgress(git.RemoteProgress):
         def update(self, op, cur_count, max_count=None, message=''):
@@ -162,6 +114,7 @@ def clone_repo(to_path, uri='ContinuumIO/anaconda'):
     git.Repo.clone_from(url, to_path+'.tmp', progress=progressDisplay)
     shutil.move(to_path+'.tmp', to_path)
     print()
+
 
 def get_recipe_contents(repo_dir):
     contents_dict = {}
@@ -206,6 +159,7 @@ def get_recipe_contents(repo_dir):
 
         contents_dict[recipe_name] = base64.b64encode(recipe_contents)
     return contents_dict
+
 
 def get_anaconda_repo_contents(use_cache=False):
     recipe_content_dict = {}
