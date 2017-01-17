@@ -308,15 +308,14 @@ def complete_action(action, debug=False):
     if action == 'externalize':
         recipes_to_update = diff_df[~diff_df.fillna(True)['ContentsEqual']]
         for (recipe_name,) in recipes_to_update[['Recipe']].itertuples(index=False):
-            print(recipe_name)
-
             external_recipe_dpath = os.path.join(WORK_DIR, 'AnacondaRecipes', recipe_name+'-recipe', 'recipe')
             internal_recipe_dpath = os.path.join(WORK_DIR, 'anaconda-recipes', recipe_name)
 
             # Checkout a new branch, commit internal stuff there, and merge master into it
             external_repo = git.Repo(os.path.join(WORK_DIR, 'AnacondaRecipes', recipe_name+'-recipe'))
-            now = datetime.datetime.now().strftime('%Y%m%d%H%M%S')
-            branch_name = 'externalize_'+now
+
+            today = datetime.datetime.now().strftime('%Y%m%d%H%M%S')
+            branch_name = 'externalize_{}'.format(today)
             external_repo.git.checkout('master', b=branch_name)
             shutil.rmtree(external_recipe_dpath) # Remove files that may no longer be needed
             shutil.copytree(internal_recipe_dpath, external_recipe_dpath) # Copy internal files over
@@ -336,11 +335,39 @@ def complete_action(action, debug=False):
                                           head=branch_name,
                                           base='master'))
     elif action == 'internalize':
-        # TODO: Open a PR with a new branch name, representing all externally-altered recipes
-        raise Exception('Not yet implemented.')
-        repo = git.Repo(os.path.join(WORK_DIR, 'anaconda'))
-        branch_name = '{}_{}'.format(action, str(datetime.datetime.now().date()))
-        repo.git.checkout('master', b=branch_name)
+        internal_repo = git.Repo(os.path.join(WORK_DIR, 'anaconda'))
+        today = datetime.datetime.now().strftime('%Y%m%d%H%M%S')
+        branch_name = 'internalize_{}'.format(today)
+        internal_repo.git.checkout('master', b=branch_name)
+
+        recipes_to_update = diff_df[~diff_df.fillna(True)['ContentsEqual']]
+        for (recipe_name,) in recipes_to_update[['Recipe']].itertuples(index=False):
+            print(recipe_name)
+            external_recipe_dpath = os.path.join(WORK_DIR, 'AnacondaRecipes', recipe_name+'-recipe', 'recipe')
+            internal_recipe_dpath = os.path.join(WORK_DIR, 'anaconda', 'packages', recipe_name)
+
+            # Some anaconda-recipes packages are not inside anaconda!
+            if not os.path.isdir(internal_recipe_dpath):
+                logging.error('Package "{}" exists in anaconda-recipes, but not inside anaconda. Ignoring...'.format(recipe_name))
+                continue
+
+            shutil.rmtree(internal_recipe_dpath) # Remove files that may no longer be needed
+            shutil.copytree(external_recipe_dpath, internal_recipe_dpath) # Copy internal files over
+            for untracked_file in internal_repo.untracked_files: # Add untracked (new) files
+                internal_repo.git.add(untracked_file)
+            internal_repo.git.commit('-a', '-m', 'Update {} recipe with external changes'.format(recipe_name))
+            internal_repo.git.merge('master')
+
+        if debug:
+            logging.info('Debug mode: Not opening PR for anaconda with branch "{}"...'.format(branch_name))
+        else:
+            logging.info('Opening PR for anaconda with branch "{}"...'.format(branch_name))
+            internal_repo.git.push('origin', branch_name)
+            GH_SESSION.post(GH_API_URL+'/repos/ContinuumIO/anaconda/pulls',
+                            data=dict(title='Update with AnacondaRecipes changes',
+                                      body='This is a test.',
+                                      head=branch_name,
+                                      base='master'))
     else:
         raise Exception('If the code reaches this point, the argument parsing logic needs to be corrected.')
 
