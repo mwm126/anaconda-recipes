@@ -10,17 +10,16 @@ recipe_arbiter.py - Arbitration for conda package recipes among the ContinuumIO 
 
 Usage:
 - Offers four "actions":
-    - quick-diff: View all public recipes that exist in either of the two
-      organizations
 
-    - diff: Like quick-diff, but provides additional information such as the
-      most-recent date that the recipes were updated
+    - diff: View all public recipes that exist in either of the two
+      organizations. Also show whether the contents are equal between the
+      internal and external versions.
 
-    - push: Takes the latest "master" of the ContinuumIO public recipes, pushes
-      each one onto a separate branch on their respective AnacondaRecipes repos,
-      and opens a PR for each one
+    - externalize: Takes the latest "master" of the ContinuumIO public recipes,
+      pushes each one onto a separate branch on their respective AnacondaRecipes
+      repos, and opens a PR for each one
 
-    - pull: Takes the latest "master" branches of the AnacondaRecipes
+    - internalize: Takes the latest "master" branches of the AnacondaRecipes
       repositories, and opens a PR on the ContinuumIO/anaconda repository
 
 Implementation Details:
@@ -40,6 +39,7 @@ especially if the internet is slow.
 
 TODOs:
 - Handle the "truncated" case (grep for 'assert .*truncated')
+- Add diff feature to actually take diffs of text files in repositories
 """
 
 
@@ -53,6 +53,8 @@ import logging
 import getpass
 import json
 import datetime
+import base64
+import uuid
 from collections import deque
 
 import git
@@ -138,7 +140,11 @@ def should_exclude_name(file_name):
 
 
 def clone_repo(to_path, uri='ContinuumIO/anaconda'):
-    """Clone repo into a fresh directory."""
+    """Clone repo into a fresh directory.
+    Do it in such a way that the operation is "atomic", so that checking
+    for directory existence is sufficient to tell whether the repository
+    was fully cloned or not.
+    """
     url = 'https://github.com/{}.git'.format(uri)
 
     if os.path.isdir(to_path):
@@ -151,28 +157,67 @@ def clone_repo(to_path, uri='ContinuumIO/anaconda'):
     # Clone the repo
     progressDisplay = DisplayProgress()
     logging.info('Cloning {}'.format(url))
-    repo = git.Repo.clone_from(url, to_path, progress=progressDisplay)
+    repo = git.Repo.clone_from(url, to_path+'.tmp', progress=progressDisplay)
+    shutil.move(to_path+'.tmp', to_path)
     print()
 
     return repo
 
+def get_recipe_contents(repo_dir):
+    contents_dict = {}
 
-def get_anaconda_recipes(quick=False):
-    """Return a dictionary with keys as all AnacondaRecipes repository names,
-    and values as all AnacondaRecipes repository specifications.
+    # Collect recipe directories into a set.
+    # Recipe directories are identified by their meta.yaml files
+    recipe_dirs = set()
+    for root, _, files in os.walk(repo_dir):
+        # Special cases to skip, that clearly aren't recipes
+        if '.git' in root or (os.path.basename(root) == 'BUILD' and
+                              os.path.basename(os.path.dirname(root)) == 'anaconda-recipes'):
+            continue
 
-    If quick=False, the values are JSON objects representing the latest commit to
-    each repository.
-    """
-    recipe_repos = {}
+        for fname in files:
+            if fname == 'meta.yaml':
+                recipe_dirs.add(root)
+                break
 
-    logging.info('Querying AnacondaRecipe repositories...')
+    # Get the contents of each recipe directory once the recipe name is found
+    for recipe_dir in recipe_dirs:
+        recipe_name = None
+        tmp = recipe_dir
+        # Handle the case where the recipe is AnacondaRecipes
+        if os.path.basename(tmp) == 'recipe':
+            tmp = os.path.dirname(tmp)
+            recipe_name = os.path.basename(tmp).rsplit('-recipe', 1)[0]
+        else:
+            recipe_name = os.path.basename(tmp)
+        assert recipe_name is not None
+
+        # Get the recipe contents as bytes, in order by file
+        recipe_contents = b''
+        for root, _, files in os.walk(recipe_dir):
+            if '.git' in root:
+                continue
+
+            for fname in sorted(files):
+                fpath = os.path.join(root, fname)
+                with open(fpath, 'rb') as fp:
+                    file_contents = fp.read()
+                recipe_contents += file_contents
+
+        contents_dict[recipe_name] = base64.b64encode(recipe_contents)
+    return contents_dict
+
+def get_anaconda_repo_contents(use_cache=False):
+    recipe_content_dict = {}
+
+    logging.info('Fetching all AnacondaRecipes repositories...')
 
     # The GitHub API paginates on repository requests; here we find the number of pages
     pages_header = GH_SESSION.head(GH_API_URL+'/orgs/AnacondaRecipes/repos?page=1')
     raise_on_err(pages_header)
     npages = int(pages_header.links['last']['url'].rsplit('=', 1)[1])
 
+    seen = set()
     for page_ct in range(1, npages+1):
         public_repos_resp = GH_SESSION.get(GH_API_URL+'/orgs/AnacondaRecipes/repos?page='+str(page_ct))
         public_repos = public_repos_resp.json()
@@ -181,19 +226,23 @@ def get_anaconda_recipes(quick=False):
             repo_name = public_repo['name']
             assert repo_name.endswith('-recipe')
             recipe_name = repo_name.split('-recipe', 1)[0]
-            if not quick:
-                commit_resp = GH_SESSION.get(GH_API_URL+'/repos/AnacondaRecipes/'+repo_name+'/commits')
-                commit_json = commit_resp.json()
-                raise_on_err(commit_json)
-                sorted_commits = list(sorted(commit_json, key=lambda c: c['commit']['committer']['date']))
-                latest_commit = sorted_commits[-1]
-                recipe_repos[recipe_name] = latest_commit
+            if recipe_name in seen: # Odd case with GitHub API
+                continue
+            seen.add(recipe_name)
+
+            repo_dir = os.path.join(WORK_DIR, 'AnacondaRecipes', repo_name)
+            if not use_cache or not os.path.isdir(repo_dir):
+                repo = clone_repo(repo_dir, uri='AnacondaRecipes/'+repo_name)
             else:
-                recipe_repos[recipe_name] = public_repo
+                repo = git.Repo(repo_dir)
+            repo.git.checkout('master')
 
-    logging.info('Found {} repositories.'.format(len(recipe_repos)))
+            recipe_dir = os.path.join(repo_dir, 'recipe')
+            recipe_content_dict.update(get_recipe_contents(recipe_dir))
 
-    return recipe_repos
+    logging.info('Found {} repositories.'.format(len(recipe_content_dict)))
+
+    return recipe_content_dict
 
 
 def add_git_subtrees(repo, recipe_repos):
@@ -219,78 +268,39 @@ def set_gh_auth():
     GH_SESSION.auth = (gh_username, gh_password)
 
 
-def get_anaconda_dist_packages(quick=False):
-    """Return a dictionary with keys as all Anaconda distribution recipe names,
-    and values as all Anaconda distribution recipe specifications.
-
-    If quick=False, the values are JSON objects representing the latest commit to
-    each repository.
-    """
+def get_anaconda_recipe_contents(use_cache=False):
     dist_packages = {}
+    dist_public_packages = {}
 
-    # Get the SHA for latest packages directory:
     logging.info('Fetching all Anaconda distribution recipes...')
-    tree_resp = GH_SESSION.get(GH_API_URL+'/repos/ContinuumIO/anaconda/git/trees/master')
-    tree_json = tree_resp.json()
-    raise_on_err(tree_json)
-    assert not tree_json['truncated'] # This means we have over 1K files in root anaconda dir
-    packages_sha = None
-    for leaf in tree_json['tree']:
-        if leaf['path'] == 'packages':
-            packages_sha = leaf['sha']
-            break
-
-    # Get the packages names and use these to get Anaconda distribution package info
-    package_tree_resp = GH_SESSION.get(GH_API_URL+'/repos/ContinuumIO/anaconda/git/trees/'+packages_sha)
-    package_tree_json = package_tree_resp.json()
-    raise_on_err(package_tree_json)
-    assert not package_tree_json['truncated'] # This means we have over 1K packages in distribution
-    dist_packages = {leaf['path']: leaf for leaf in package_tree_json['tree']}
-    logging.info('Found {} distribution recipes.'.format(len(dist_packages)))
-
+    anaconda_repo_dir = os.path.join(WORK_DIR, 'anaconda')
+    if not use_cache or not os.path.isdir(anaconda_repo_dir):
+        repo = clone_repo(anaconda_repo_dir, uri='ContinuumIO/anaconda')
+    else:
+        repo = git.Repo(anaconda_repo_dir)
+    repo.git.checkout('master')
+    pkgs_dir = os.path.join(anaconda_repo_dir, 'packages')
+    for recipe_dir in os.listdir(pkgs_dir):
+        recipe_dpath = os.path.join(pkgs_dir, recipe_dir)
+        dist_packages.update(get_recipe_contents(recipe_dpath))
+    logging.info('Found {} total distribution recipes.'.format(len(dist_packages)))
 
     logging.info('Fetching public Anaconda distribution recipes...')
-    dist_public_packages = {}
-    public_package_tree_resp = GH_SESSION.get(GH_API_URL+'/repos/ContinuumIO/anaconda-recipes/git/trees/master')
-    public_package_tree_json = public_package_tree_resp.json()
-    raise_on_err(public_package_tree_json)
-    assert not public_package_tree_json['truncated'] # This means we have over 1K packages in public repo
-    public_package_names = {leaf['path']: leaf for leaf in public_package_tree_json['tree']}
-
-    # Find the earliest commit for the packages directory. Use this as the "default" when GitHub returns
-    # an empty list on the commits of a subdirectory.
-    commit_resp = GH_SESSION.get(GH_API_URL+'/repos/ContinuumIO/anaconda/commits?path=packages')
-    commit_json = commit_resp.json()
-    raise_on_err(commit_json)
-    sorted_commits = list(sorted(commit_json, key=lambda c: c['commit']['committer']['date']))
-    default_commit = sorted_commits[0]
-
-    for package_ct, package_name in enumerate(public_package_names):
-        if should_exclude_name(package_name):
-            continue
-
-        # Get the commit data for each public Anaconda recipe
-        if not quick:
-            commit_resp = GH_SESSION.get(GH_API_URL+'/repos/ContinuumIO/anaconda/commits?path=packages/'+package_name)
-            commit_json = commit_resp.json()
-            raise_on_err(commit_json)
-            sorted_commits = list(sorted(commit_json, key=lambda c: c['commit']['committer']['date']))
-            if not sorted_commits:
-                latest_commit = default_commit
-            else:
-                latest_commit = sorted_commits[-1]
-            dist_public_packages[package_name] = latest_commit
-        else:
-            dist_public_packages[package_name] = public_package_names[package_name]
-
-
+    anaconda_recipes_repo_dir = os.path.join(WORK_DIR, 'anaconda-recipes')
+    if not use_cache or not os.path.isdir(anaconda_recipes_repo_dir):
+        clone_repo(anaconda_recipes_repo_dir, uri='ContinuumIO/anaconda-recipes')
+    else:
+        repo = git.Repo(anaconda_recipes_repo_dir)
+    repo.git.checkout('master')
+    for recipe_dir in os.listdir(anaconda_recipes_repo_dir):
+        recipe_dpath = os.path.join(anaconda_recipes_repo_dir, recipe_dir)
+        dist_public_packages.update(get_recipe_contents(recipe_dpath))
     logging.info('Found {} public distribution recipes.'.format(len(dist_public_packages)))
-
 
     return dist_packages, dist_public_packages
 
 
-def calc_recipe_diff(public_recipes, dist_public_recipes, quick=False):
+def calc_recipe_diff(public_recipes, dist_public_recipes):
     """Return a Pandas dataframe object representing the diff between public_recipes and dist_public_recipes.
     """
     logging.info('Calculating recipe differences...')
@@ -302,39 +312,28 @@ def calc_recipe_diff(public_recipes, dist_public_recipes, quick=False):
     common_recipes = dist_repo_names.intersection(public_repo_names)
 
     recipes = sorted(dist_repo_names.union(public_repo_names))
-    df = pd.DataFrame(columns=['Recipe', 'AnacondaRecipes', 'ContinuumIO'])
+    df = pd.DataFrame(columns=['Recipe', 'AnacondaRecipes', 'ContinuumIO', 'ContentsEqual'])
     df['Recipe'] = recipes
-    if quick:
-        df['AnacondaRecipes'] = df['Recipe'].map(lambda r: r in public_recipes)
-        df['ContinuumIO'] = df['Recipe'].map(lambda r: r in dist_public_recipes)
-    else:
-        df['AnacondaRecipes'] = df['Recipe'].map(lambda r: public_recipes[r]['commit']['committer']['date'] if r in public_recipes else pd.np.nan)
-        df['ContinuumIO'] = df['Recipe'].map(lambda r: dist_public_recipes[r]['commit']['committer']['date'] if r in dist_public_recipes else pd.np.nan)
+    df['AnacondaRecipes'] = df['Recipe'].map(lambda r: r in public_recipes)
+    df['ContinuumIO'] = df['Recipe'].map(lambda r: r in dist_public_recipes)
+    df['ContentsEqual'] = df['Recipe'].map(lambda r: public_recipes[r] == dist_public_recipes[r] if r in public_recipes and r in dist_public_recipes else pd.np.nan)
 
     return df
 
 
-def get_recipe_diff(action, debug=False):
+def get_recipe_diff(debug=False):
     """Return a Pandas dataframe representing a "diff" between AnacondaRecipes
     and ContinuumIO organizations' views of public conda packages.
-
-    action can be one of the following: ('quick-diff', 'diff')
     """
     response_types = 'public_recipes', 'dist_recipes', 'dist_public_recipes'
-    if debug and cache_is_ready(*response_types):
-        logging.info('Reading cached GitHub API responses.')
-        public_recipes, dist_recipes, dist_public_recipes = read_cached_responses(*response_types)
-    else:
-        set_gh_auth() # Fixes "API rate limit exceeded" issue
-        public_recipes = get_anaconda_recipes(quick=('quick' in action))
-        dist_recipes, dist_public_recipes = get_anaconda_dist_packages(quick=('quick' in action))
-        write_responses_cache(public_recipes, dist_recipes, dist_public_recipes)
+    external_recipes = get_anaconda_repo_contents(use_cache=debug)
+    dist_recipes, dist_public_recipes = get_anaconda_recipe_contents(use_cache=debug)
 
-    logging.info('AnacondaRecipes repos: {}'.format(len(public_recipes)))
+    logging.info('AnacondaRecipes repos: {}'.format(len(external_recipes)))
     logging.info('anaconda-recipes (mirrored) recipes: {}'.format(len(dist_public_recipes)))
     logging.info('Anaconda Distribution (open source + internal) recipes: {}'.format(len(dist_recipes)))
 
-    diff_df = calc_recipe_diff(public_recipes, dist_public_recipes, quick=('quick' in action))
+    diff_df = calc_recipe_diff(external_recipes, dist_public_recipes)
     return diff_df
 
 
@@ -342,32 +341,56 @@ def complete_action(action, debug=False):
     """Return an integer status code - 0 meaning success, nonzero meaning
     failure - after executing user-requested action.
 
-    action can be one of the following: ('quick-diff', 'diff', 'push', 'pull')
+    action can be one of the following: ('diff', 'externalize', 'internalize')
     debug=True enables the GitHub API response cache.
     """
     logging.info('Executing action "{}".'.format(action))
     if debug:
         logging.info('Debug mode enabled.')
 
-    if action in ('quick-diff', 'diff'):
-        diff_df = get_recipe_diff(action, debug=debug)
-        logging.info('\n'+str(diff_df))
+    set_gh_auth() # Fixes "API rate limit exceeded" issue
+
+    diff_df = get_recipe_diff(debug=debug)
+    logging.info('\n'+str(diff_df))
+
+    if action == 'diff':
+        return 0
+
+    if action == 'externalize':
+        recipes_to_update = diff_df[~diff_df.fillna(True)['ContentsEqual']]
+        for (recipe_name,) in recipes_to_update[['Recipe']].itertuples(index=False):
+            print(recipe_name)
+
+            external_recipe_dpath = os.path.join(WORK_DIR, 'AnacondaRecipes', recipe_name+'-recipe', 'recipe')
+            internal_recipe_dpath = os.path.join(WORK_DIR, 'anaconda-recipes', recipe_name)
+
+            # Checkout a new branch, commit internal stuff there, and merge master into it
+            external_repo = git.Repo(os.path.join(WORK_DIR, 'AnacondaRecipes', recipe_name+'-recipe'))
+            now = datetime.datetime.now().strftime('%Y%m%d%H%M%S')
+            branch_name = 'externalize_'+now
+            external_repo.git.checkout('master', b=branch_name)
+            shutil.rmtree(external_recipe_dpath) # Remove files that may no longer be needed
+            shutil.copytree(internal_recipe_dpath, external_recipe_dpath) # Copy internal files over
+            for untracked_file in external_repo.untracked_files: # Add untracked (new) files
+                external_repo.git.add(untracked_file)
+            external_repo.git.commit('-a', '-m', 'Update with internal changes')
+            external_repo.git.merge('master')
+
+            logging.info('Opening PR for recipe "{}" with branch "{}"...'.format(recipe_name, branch_name))
+            external_repo.git.push('origin', branch_name)
+            GH_SESSION.post(GH_API_URL+'/repos/AnacondaRecipes/'+recipe_name+'-recipe/pulls',
+                            data=dict(title='Update with internal changes',
+                                      body='This is a test.',
+                                      head=branch_name,
+                                      base='master'))
+    elif action == 'internalize':
+        # TODO: Open a PR with a new branch name, representing all externally-altered recipes
+        raise Exception('Not yet implemented.')
+        repo = git.Repo(os.path.join(WORK_DIR, 'anaconda'))
+        branch_name = '{}_{}'.format(action, str(datetime.datetime.now().date()))
+        repo.git.checkout('master', b=branch_name)
     else:
-        set_gh_auth() # Fixes "API rate limit exceeded" issue
-        public_recipes = get_anaconda_recipes(quick=True)
-
-        repo = clone_repo(os.path.join(WORK_DIR, 'anaconda'))
-        branch_name = 'AR_{}_{}'.format(action, str(datetime.datetime.now().date()))
-        repo.git.checkout('HEAD', b=branch_name)
-
-        if action == 'push':
-            # TODO: Use the GitHub API to open PRs on each AnacondaRecipes repository
-            pass
-        elif action == 'pull':
-            # TODO: Open a PR with a new branch name, representing all externally-altered recipes
-            add_git_subtrees(repo, public_recipes)
-        else:
-            raise Exception('If the code reaches this point, the argument parsing logic needs to be corrected.')
+        raise Exception('If the code reaches this point, the argument parsing logic needs to be corrected.')
 
     return 0
 
@@ -378,7 +401,7 @@ def main(argv):
     status code.
     """
     parser = argparse.ArgumentParser()
-    parser.add_argument('action', choices=('quick-diff', 'diff', 'pull', 'push'), help='Action')
+    parser.add_argument('action', choices=('quick-diff', 'diff', 'externalize', 'internalize'), help='Action')
     parser.add_argument('-l', '--log-level', choices=['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'], default='INFO', help='Logging level')
     parser.add_argument('-d', '--debug', action='store_true', help='Speed up debugging by caching GitHub API responses on disk, and reading these responses on future runs in --debug mode. This also avoids user/pass prompt after cache is created.')
     args = parser.parse_args(argv[1:])
