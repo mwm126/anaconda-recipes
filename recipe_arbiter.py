@@ -282,6 +282,22 @@ def get_recipe_diff(debug=False):
     return diff_df
 
 
+def wait_for_gh_branch(url):
+    """Wait for GitHub API to reflect that a branch (at url) exists.
+    """
+    tries = 5
+    ref_name = '/'.join(url.rsplit('/', 3)[1:])
+    while tries:
+        branch_exists_resp = GH_SESSION.get(url)
+        time.sleep(.5) # Wait 30 seconds
+        branch_exists_json = branch_exists_resp.json()
+        if (isinstance(branch_exists_json, dict) and
+            branch_exists_json.get('ref', '') == ref_name):
+            return True
+        tries -= 1
+    return False
+
+
 def complete_action(action, debug=False):
     """Return an integer status code - 0 meaning success, nonzero meaning
     failure - after executing user-requested action.
@@ -324,12 +340,17 @@ def complete_action(action, debug=False):
                 logging.info('Debug mode: Not opening PR for recipe "{}" with branch "{}"...'.format(recipe_name, branch_name))
             else:
                 logging.info('Opening PR for recipe "{}" with branch "{}"...'.format(recipe_name, branch_name))
-                external_repo.git.push('origin', branch_name)
-                GH_SESSION.post(GH_API_URL+'/repos/AnacondaRecipes/'+recipe_name+'-recipe/pulls',
-                                data=dict(title='Update with internal changes',
-                                          body='',
-                                          head=branch_name,
-                                          base='master'))
+                external_repo.remotes.origin.push(branch_name)
+                success = wait_for_gh_branch(GH_API_URL+'/repos/AnacondaRecipes/'+recipe_name+'-recipe/git/refs/heads/'+branch_name)
+                if not success:
+                    logging.error('GitHub failed to create branch "{}". Ignoring changes for recipe "{}"...'.format(branch_name, recipe_name))
+                    continue
+                pr_resp = GH_SESSION.post(GH_API_URL+'/repos/AnacondaRecipes/'+recipe_name+'-recipe/pulls',
+                                          json=dict(title='Update with changes from ContinuumIO',
+                                                    head=branch_name,
+                                                    base='master',
+                                                    body='This is an automated message.'))
+                raise_on_err(pr_resp)
     elif action == 'internalize':
         internal_repo = git.Repo(os.path.join(WORK_DIR, 'anaconda'))
         today = datetime.datetime.now().strftime('%Y%m%d%H%M%S')
@@ -357,12 +378,17 @@ def complete_action(action, debug=False):
             logging.info('Debug mode: Not opening PR for anaconda with branch "{}"...'.format(branch_name))
         else:
             logging.info('Opening PR for anaconda with branch "{}"...'.format(branch_name))
-            internal_repo.git.push('origin', branch_name)
-            GH_SESSION.post(GH_API_URL+'/repos/ContinuumIO/anaconda/pulls',
-                            data=dict(title='Update with AnacondaRecipes changes',
-                                      body='',
-                                      head=branch_name,
-                                      base='master'))
+            internal_repo.remotes.origin.push(branch_name)
+            success = wait_for_gh_branch(GH_API_URL+'/repos/ContinuumIO/anaconda/git/refs/heads/'+branch_name)
+            if not success:
+                logging.error('GitHub failed to create branch "{}". Ignoring changes for recipe "{}"...'.format(branch_name, recipe_name))
+                continue
+            pr_resp = GH_SESSION.post(GH_API_URL+'/repos/ContinuumIO/anaconda/pulls',
+                                      json=dict(title='Update with changes from AnacondaRecipes',
+                                                head=branch_name,
+                                                base='master',
+                                                body='This is an automated message.'))
+            raise_on_err(pr_resp)
     else:
         raise Exception('If the code reaches this point, the argument parsing logic needs to be corrected.')
 
