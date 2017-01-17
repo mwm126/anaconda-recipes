@@ -36,10 +36,6 @@ an alternative way to distinguish between public and private recipes
 Tips:
 - While developing, the -d/--debug feature is a big time-saver on repeat runs,
 especially if the internet is slow.
-
-TODOs:
-- Handle the "truncated" case (grep for 'assert .*truncated')
-- Add diff feature to actually take diffs of text files in repositories
 """
 
 
